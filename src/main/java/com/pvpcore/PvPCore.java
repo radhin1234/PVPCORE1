@@ -25,7 +25,6 @@ public final class PvPCore extends JavaPlugin {
         saveDefaultConfig();
 
         stats = new StatsManager(this);
-        stats.load();
         getServer().getPluginManager().registerEvents(stats, this);
         kdActionBar = new KdActionBar(this, stats);
 
@@ -54,13 +53,7 @@ public final class PvPCore extends JavaPlugin {
         }
 
         applyConfig();
-    }
-
-    @Override
-    public void onDisable() {
-        if (stats != null) {
-            stats.shutdown();
-        }
+        stats.start();
     }
 
     /** Re-reads config.yml and pushes the values into every module. */

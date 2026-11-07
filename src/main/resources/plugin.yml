@@ -8,7 +8,7 @@ authors: [PvPCore]
 commands:
   pvpcore:
     description: PvPCore admin command
-    usage: /<command> <reload|info|spear|kit|stats>
+    usage: /<command> <reload|info|spear|kit>
     aliases: [pvc]
     permission: pvpcore.admin
   leaderboard:

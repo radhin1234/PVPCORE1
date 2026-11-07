@@ -50,7 +50,13 @@ public final class LeaderboardCommand implements CommandExecutor {
         Component title = miniMessage.deserialize(config.getString("leaderboard.title", DEFAULT_TITLE));
 
         UUID viewer = sender instanceof Player player ? player.getUniqueId() : null;
+        stats.refreshOnline();
         Component subtitle = Component.text("Best K/D first. The small numbers are kills/deaths.", NamedTextColor.GRAY);
+        if (stats.isLoading()) {
+            subtitle = subtitle.append(Component.newline()).append(Component.text(
+                    "Still loading offline players (" + stats.loadedPercent() + "%), so the list may be incomplete.",
+                    NamedTextColor.YELLOW));
+        }
         Component list = listComponent(stats.top(size), viewer, decimals);
         Component own = ownComponent(viewer, decimals);
 

@@ -113,14 +113,21 @@ shield-stun:
 
 # ---------------------------------------------------------------------------
 # K/D stats
-# Kills and deaths are counted from real player deaths and kept in
-# plugins/PvPCore/stats.yml. K/D = kills / deaths; a player with no deaths yet has a
-# K/D equal to their kills. Players are ranked by K/D (ties: more kills, then fewer
-# deaths). Players with no kills and no deaths are unranked.
+# Kills and deaths come straight from Minecraft's own statistics (Statistic.PLAYER_KILLS
+# and Statistic.DEATHS, the same numbers as the in-game Statistics screen). The plugin
+# stores nothing of its own, so nothing here can reset them.
+# K/D = kills / deaths; a player with no deaths yet has a K/D equal to their kills.
+# Players are ranked by K/D (ties: more kills, then fewer deaths). Players with 0 kills
+# and 0 deaths are unranked.
 # ---------------------------------------------------------------------------
 stats:
-  # How often totals are written to stats.yml, in seconds. Also saved on shutdown.
-  save-interval-seconds: 300
+  # How often online players' numbers are re-read, in ticks (10 = twice a second).
+  refresh-interval-ticks: 10
+
+  # After a restart the plugin reads the statistics of every player who has played
+  # before, a few per tick, so a big server does not freeze. Raise this to finish
+  # sooner, lower it if you see lag right after a restart.
+  warmup-players-per-tick: 10
 
 # ---------------------------------------------------------------------------
 # Action bar: only K/D and rank.

@@ -18,14 +18,13 @@ import org.bukkit.inventory.meta.FireworkMeta;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.util.UUID;
 
 /**
  * /pvpcore reload | info | spear | kit spearelytra [player]
  */
 public final class PvPCoreCommand implements TabExecutor {
 
-    private static final List<String> SUBCOMMANDS = List.of("reload", "info", "spear", "kit", "stats");
+    private static final List<String> SUBCOMMANDS = List.of("reload", "info", "spear", "kit");
 
     private final PvPCore plugin;
 
@@ -36,7 +35,7 @@ public final class PvPCoreCommand implements TabExecutor {
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (args.length == 0) {
-            send(sender, "Usage: /" + label + " <reload|info|spear|kit|stats>", NamedTextColor.YELLOW);
+            send(sender, "Usage: /" + label + " <reload|info|spear|kit>", NamedTextColor.YELLOW);
             return true;
         }
         switch (args[0].toLowerCase(Locale.ROOT)) {
@@ -47,39 +46,16 @@ public final class PvPCoreCommand implements TabExecutor {
             case "info" -> info(sender);
             case "spear" -> patchHeldSpear(sender);
             case "kit" -> kit(sender, args);
-            case "stats" -> stats(sender, args);
-            default -> send(sender, "Unknown subcommand. Use reload, info, spear, kit or stats.", NamedTextColor.RED);
+            default -> send(sender, "Unknown subcommand. Use reload, info, spear or kit.", NamedTextColor.RED);
         }
         return true;
     }
 
-    /** /pvpcore stats reset <player|all confirm> */
-    private void stats(CommandSender sender, String[] args) {
-        StatsManager stats = plugin.getStats();
-        if (args.length >= 3 && args[1].equalsIgnoreCase("reset")) {
-            if (args[2].equalsIgnoreCase("all")) {
-                if (args.length < 4 || !args[3].equalsIgnoreCase("confirm")) {
-                    send(sender, "This wipes everyone's K/D. Run /pvpcore stats reset all confirm to do it.",
-                            NamedTextColor.YELLOW);
-                    return;
-                }
-                send(sender, "Reset the stats of " + stats.resetAll() + " players.", NamedTextColor.GREEN);
-                return;
-            }
-            UUID id = stats.findByName(args[2]);
-            if (id == null || !stats.reset(id)) {
-                send(sender, "No stats found for " + args[2] + ".", NamedTextColor.RED);
-                return;
-            }
-            send(sender, "Reset the stats of " + args[2] + ".", NamedTextColor.GREEN);
-            return;
-        }
-        send(sender, "Usage: /pvpcore stats reset <player|all confirm>", NamedTextColor.YELLOW);
-    }
-
     private void info(CommandSender sender) {
         var config = plugin.getConfig();
-        send(sender, "K/D stats: " + plugin.getStats().rankedCount() + " ranked players", NamedTextColor.AQUA);
+        send(sender, "K/D stats: " + plugin.getStats().rankedCount() + " ranked players"
+                + (plugin.getStats().isLoading() ? " (still loading " + plugin.getStats().loadedPercent() + "%)" : ""),
+                NamedTextColor.AQUA);
         send(sender, "Wind charge reset: " + onOff(config.getBoolean("wind-charge-reset.enabled", true)), NamedTextColor.AQUA);
         send(sender, "Shield stun: " + onOff(config.getBoolean("shield-stun.enabled", true)), NamedTextColor.AQUA);
         if (plugin.isSpearModuleAvailable()) {
@@ -222,24 +198,6 @@ public final class PvPCoreCommand implements TabExecutor {
                 if (sub.startsWith(args[0].toLowerCase(Locale.ROOT))) {
                     out.add(sub);
                 }
-            }
-        } else if (args.length == 2 && args[0].equalsIgnoreCase("stats")) {
-            if ("reset".startsWith(args[1].toLowerCase(Locale.ROOT))) {
-                out.add("reset");
-            }
-        } else if (args.length == 3 && args[0].equalsIgnoreCase("stats") && args[1].equalsIgnoreCase("reset")) {
-            String prefix = args[2].toLowerCase(Locale.ROOT);
-            if ("all".startsWith(prefix)) {
-                out.add("all");
-            }
-            for (Player player : Bukkit.getOnlinePlayers()) {
-                if (player.getName().toLowerCase(Locale.ROOT).startsWith(prefix)) {
-                    out.add(player.getName());
-                }
-            }
-        } else if (args.length == 4 && args[0].equalsIgnoreCase("stats") && args[2].equalsIgnoreCase("all")) {
-            if ("confirm".startsWith(args[3].toLowerCase(Locale.ROOT))) {
-                out.add("confirm");
             }
         } else if (args.length == 2 && args[0].equalsIgnoreCase("kit")) {
             if ("spearelytra".startsWith(args[1].toLowerCase(Locale.ROOT))) {

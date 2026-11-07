@@ -1,39 +1,38 @@
 package com.pvpcore;
 
 import org.bukkit.Bukkit;
-import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.InvalidConfigurationException;
-import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.Statistic;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.scheduler.BukkitTask;
 
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.logging.Level;
 
 /**
- * Kill / death tracking and K/D ranking.
+ * K/D ranking built on Minecraft's own statistics.
+ *
+ * <p>Kills and deaths are {@link Statistic#PLAYER_KILLS} and {@link Statistic#DEATHS}, the numbers
+ * in the in-game Statistics screen, so the server already stores them and this plugin keeps no data
+ * of its own. This class only holds an in-memory copy to make ranking fast.
  *
  * <p>K/D is kills divided by deaths; a player with no deaths yet has a K/D equal to their kills.
  * Players are ranked by K/D, then by more kills, then by fewer deaths. Players with no kills and no
- * deaths are unranked. Totals live in memory and are written to plugins/PvPCore/stats.yml on a
- * timer and on shutdown. All methods must be called from the main thread.
+ * deaths are unranked.
+ *
+ * <p>Online players are re-read on a timer. Players who are offline are read once at startup, a few
+ * per tick, so a server with many players does not stall. All methods must be called from the main
+ * thread.
  */
 public final class StatsManager implements Listener {
 
@@ -97,184 +96,133 @@ public final class StatsManager implements Listener {
     };
 
     private final PvPCore plugin;
-    private final File file;
-    private final Object fileLock = new Object();
     private final Map<UUID, PlayerStats> stats = new HashMap<>();
 
     private List<UUID> ranking = List.of();
     private Map<UUID, Integer> rankIndex = Map.of();
     private boolean rankingDirty = true;
 
-    private volatile boolean saveNeeded;
-    private long saveVersion;
-    private long lastWrittenVersion; // guarded by fileLock
-    private BukkitTask saveTask;
+    private final ArrayDeque<OfflinePlayer> warmupQueue = new ArrayDeque<>();
+    private int warmupTotal;
+    private int warmupPerTick = 10;
+    private BukkitTask warmupTask;
+    private BukkitTask refreshTask;
 
     public StatsManager(PvPCore plugin) {
         this.plugin = plugin;
-        this.file = new File(plugin.getDataFolder(), "stats.yml");
     }
 
     // ------------------------------------------------------------------
-    // Loading, saving
+    // Loading
     // ------------------------------------------------------------------
 
-    /** Reads stats.yml. Called once on startup. */
-    void load() {
-        stats.clear();
-        rankingDirty = true;
-        if (!file.exists()) {
-            return;
-        }
-        YamlConfiguration yaml = new YamlConfiguration();
-        try {
-            yaml.load(file);
-        } catch (IOException | InvalidConfigurationException ex) {
-            plugin.getLogger().log(Level.SEVERE,
-                    "Could not read stats.yml. A copy is kept next to it and stats start empty.", ex);
-            keepBrokenCopy();
-            return;
-        }
-        ConfigurationSection players = yaml.getConfigurationSection("players");
-        if (players == null) {
-            return;
-        }
-        for (String key : players.getKeys(false)) {
-            UUID id;
-            try {
-                id = UUID.fromString(key);
-            } catch (IllegalArgumentException ex) {
-                plugin.getLogger().warning("Skipping stats entry with a bad UUID: " + key);
-                continue;
-            }
-            ConfigurationSection section = players.getConfigurationSection(key);
-            if (section == null) {
-                continue;
-            }
-            stats.put(id, new PlayerStats(
-                    section.getString("name", "Unknown"),
-                    Math.max(0, section.getInt("kills")),
-                    Math.max(0, section.getInt("deaths"))));
-        }
-    }
-
-    private void keepBrokenCopy() {
-        try {
-            Path broken = file.toPath().resolveSibling("stats.broken-" + System.currentTimeMillis() + ".yml");
-            Files.copy(file.toPath(), broken);
-        } catch (IOException ex) {
-            plugin.getLogger().log(Level.WARNING, "Could not copy the unreadable stats.yml", ex);
-        }
-    }
-
-    /** (Re)starts the periodic save from config. Does not reload the file. */
+    /** Reads the settings and (re)starts the timer that re-reads online players. */
     void reload() {
-        if (saveTask != null) {
-            saveTask.cancel();
-            saveTask = null;
+        var config = plugin.getConfig();
+        warmupPerTick = Math.max(1, config.getInt("stats.warmup-players-per-tick", 10));
+        int interval = Math.max(1, config.getInt("stats.refresh-interval-ticks", 10));
+
+        if (refreshTask != null) {
+            refreshTask.cancel();
         }
-        long seconds = Math.max(10L, plugin.getConfig().getLong("stats.save-interval-seconds", 300L));
-        long ticks = seconds * 20L;
-        saveTask = Bukkit.getScheduler().runTaskTimer(plugin, this::saveAsyncIfNeeded, ticks, ticks);
+        refreshTask = Bukkit.getScheduler().runTaskTimer(plugin, this::refreshOnline, interval, interval);
     }
 
-    /** Writes everything immediately. Called when the plugin is disabled. */
-    void shutdown() {
-        if (saveTask != null) {
-            saveTask.cancel();
-            saveTask = null;
+    /** Called once on startup: reads online players now and queues everyone else. */
+    void start() {
+        refreshOnline();
+
+        warmupQueue.clear();
+        for (OfflinePlayer player : Bukkit.getOfflinePlayers()) {
+            if (player.getPlayer() == null) { // online players were just read
+                warmupQueue.add(player);
+            }
         }
-        if (saveNeeded) {
-            saveNeeded = false;
-            write(serialise(), ++saveVersion);
+        warmupTotal = warmupQueue.size();
+        if (warmupTotal > 0) {
+            warmupTask = Bukkit.getScheduler().runTaskTimer(plugin, this::warmupBatch, 1L, 1L);
         }
     }
 
-    private void saveAsyncIfNeeded() {
-        if (!saveNeeded) {
+    /** Reads the next few offline players; stops its own timer when the queue is empty. */
+    void warmupBatch() {
+        for (int i = 0; i < warmupPerTick && !warmupQueue.isEmpty(); i++) {
+            refresh(warmupQueue.poll());
+        }
+        if (warmupQueue.isEmpty() && warmupTask != null) {
+            warmupTask.cancel();
+            warmupTask = null;
+        }
+    }
+
+    /** True while offline players are still being read after a restart. */
+    public boolean isLoading() {
+        return !warmupQueue.isEmpty();
+    }
+
+    public int loadedPercent() {
+        if (warmupTotal == 0) {
+            return 100;
+        }
+        return (int) (100.0 * (warmupTotal - warmupQueue.size()) / warmupTotal);
+    }
+
+    // ------------------------------------------------------------------
+    // Reading statistics
+    // ------------------------------------------------------------------
+
+    /** Re-reads every online player's statistics. Cheap: online statistics are held in memory. */
+    public void refreshOnline() {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            refresh(player);
+        }
+    }
+
+    /** Re-reads one player's kills and deaths from Minecraft's statistics. */
+    public void refresh(OfflinePlayer player) {
+        int kills;
+        int deaths;
+        try {
+            kills = Math.max(0, player.getStatistic(Statistic.PLAYER_KILLS));
+            deaths = Math.max(0, player.getStatistic(Statistic.DEATHS));
+        } catch (RuntimeException ex) {
+            return; // unreadable statistics: keep whatever we already have
+        }
+
+        UUID id = player.getUniqueId();
+        PlayerStats current = stats.get(id);
+        String name = player.getName();
+        if (name == null) {
+            name = current != null ? current.name : "Unknown";
+        }
+
+        if (current == null) {
+            if (kills > 0 || deaths > 0) {
+                stats.put(id, new PlayerStats(name, kills, deaths));
+                rankingDirty = true;
+            }
             return;
         }
-        saveNeeded = false;
-        long version = ++saveVersion;
-        String data = serialise(); // built here on the main thread, written on another one
-        Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> write(data, version));
-    }
-
-    private String serialise() {
-        YamlConfiguration yaml = new YamlConfiguration();
-        for (Map.Entry<UUID, PlayerStats> entry : stats.entrySet()) {
-            PlayerStats s = entry.getValue();
-            if (!s.hasPlayed()) {
-                continue;
-            }
-            String base = "players." + entry.getKey();
-            yaml.set(base + ".name", s.name);
-            yaml.set(base + ".kills", s.kills);
-            yaml.set(base + ".deaths", s.deaths);
+        if (current.kills != kills || current.deaths != deaths || !current.name.equals(name)) {
+            current.kills = kills;
+            current.deaths = deaths;
+            current.name = name;
+            rankingDirty = true;
         }
-        return yaml.saveToString();
-    }
-
-    private void write(String data, long version) {
-        synchronized (fileLock) {
-            if (version < lastWrittenVersion) {
-                return; // a newer snapshot has already been written
-            }
-            try {
-                Files.createDirectories(file.getParentFile().toPath());
-                Path temp = file.toPath().resolveSibling(file.getName() + ".tmp");
-                Files.writeString(temp, data, StandardCharsets.UTF_8);
-                try {
-                    Files.move(temp, file.toPath(),
-                            StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-                } catch (AtomicMoveNotSupportedException ex) {
-                    Files.move(temp, file.toPath(), StandardCopyOption.REPLACE_EXISTING);
-                }
-                lastWrittenVersion = version;
-            } catch (IOException ex) {
-                plugin.getLogger().log(Level.SEVERE, "Could not save stats.yml, will retry", ex);
-                saveNeeded = true;
-            }
-        }
-    }
-
-    // ------------------------------------------------------------------
-    // Counting
-    // ------------------------------------------------------------------
-
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void onDeath(PlayerDeathEvent event) {
-        Player victim = event.getEntity();
-        Player killer = victim.getKiller();
-        touch(victim).deaths++;
-        if (killer != null && !killer.equals(victim)) {
-            touch(killer).kills++;
-        }
-        markChanged();
     }
 
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
-        PlayerStats existing = stats.get(event.getPlayer().getUniqueId());
-        if (existing != null && !existing.name.equals(event.getPlayer().getName())) {
-            existing.name = event.getPlayer().getName();
-            markChanged();
-        }
+        refresh(event.getPlayer());
     }
 
-    private PlayerStats touch(Player player) {
-        PlayerStats s = stats.computeIfAbsent(player.getUniqueId(), id -> new PlayerStats(player.getName(), 0, 0));
-        s.name = player.getName();
-        return s;
-    }
-
-    private void markChanged() {
-        rankingDirty = true;
-        saveNeeded = true;
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onQuit(PlayerQuitEvent event) {
+        refresh(event.getPlayer()); // final numbers before they go offline
     }
 
     // ------------------------------------------------------------------
-    // Reading
+    // Ranking
     // ------------------------------------------------------------------
 
     /** The player's totals, or null if they have never killed or died. */
@@ -339,35 +287,6 @@ public final class StatsManager implements Listener {
         ranking = order;
         rankIndex = index;
         rankingDirty = false;
-    }
-
-    // ------------------------------------------------------------------
-    // Admin
-    // ------------------------------------------------------------------
-
-    public UUID findByName(String name) {
-        for (Map.Entry<UUID, PlayerStats> entry : stats.entrySet()) {
-            if (entry.getValue().name.equalsIgnoreCase(name)) {
-                return entry.getKey();
-            }
-        }
-        return null;
-    }
-
-    public boolean reset(UUID id) {
-        if (stats.remove(id) == null) {
-            return false;
-        }
-        markChanged();
-        return true;
-    }
-
-    /** @return how many players were wiped */
-    public int resetAll() {
-        int count = stats.size();
-        stats.clear();
-        markChanged();
-        return count;
     }
 
     // ------------------------------------------------------------------
