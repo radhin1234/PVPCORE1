@@ -1,0 +1,25 @@
+name: PvPCore
+version: '${project.version}'
+main: com.pvpcore.PvPCore
+api-version: '1.21'
+description: PvP core for FFA/practice servers - wind charge resets, spear charge rules, shield stunning, K/D ranking.
+authors: [PvPCore]
+
+commands:
+  pvpcore:
+    description: PvPCore admin command
+    usage: /<command> <reload|info|spear|kit|stats>
+    aliases: [pvc]
+    permission: pvpcore.admin
+  leaderboard:
+    description: Show the K/D leaderboard
+    usage: /<command>
+    permission: pvpcore.leaderboard
+
+permissions:
+  pvpcore.admin:
+    description: Use /pvpcore
+    default: op
+  pvpcore.leaderboard:
+    description: Use /leaderboard
+    default: true

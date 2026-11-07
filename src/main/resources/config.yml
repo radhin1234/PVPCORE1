@@ -1,0 +1,145 @@
+# PvPCore configuration
+# /pvpcore reload applies changes without a restart.
+#
+# IMPORTANT: the defaults below are based on how Minemen-style servers are publicly
+# described (and on community re-implementations of those mechanics), not on any
+# server's source code. Treat them as a starting point and tune by feel against the
+# server you are copying. Turn on `debug` while tuning.
+
+debug: false
+
+# ---------------------------------------------------------------------------
+# Wind charge reset
+# A falling player who throws a wind charge downward gets their downward motion
+# cancelled almost instantly, keeps their horizontal speed, and takes no fall damage.
+# ---------------------------------------------------------------------------
+wind-charge-reset:
+  enabled: true
+
+  # Ticks between the throw and the reset (1 tick = 50 ms). Minimum 1.
+  delay-ticks: 1
+
+  # Blocks per tick the player must be falling at (0.5 = 10 blocks/second).
+  min-fall-speed: 0.5
+
+  # How far down the player must look (0 = horizon, 90 = straight down).
+  min-pitch: 45.0
+
+  # Allow the reset while flying with an elytra.
+  allow-while-gliding: false
+
+  # true  = the wind charge explodes mid-air (it still pushes nearby opponents).
+  # false = the wind charge is simply removed.
+  explode-charge: true
+
+  # Vertical velocity (blocks per tick) the player is left with after the reset.
+  # 0.0 = hang in the air, positive = small hop, negative = slow fall.
+  own-vertical-velocity: 0.0
+
+  # Multiplier applied to the horizontal speed that is kept. 1.0 = keep everything.
+  horizontal-multiplier: 1.0
+
+  # Clear fall distance so the landing does no fall damage.
+  reset-fall-distance: true
+
+# ---------------------------------------------------------------------------
+# Spear charge rules
+# Rewrites the spear's kinetic weapon component so the charge attack deals damage
+# right away: no wind-up delay and no time limit on the damage window. The damage
+# still scales with speed, so an elytra dive stays the strongest hit.
+# ---------------------------------------------------------------------------
+spear:
+  enabled: true
+
+  # Spears are patched when they are picked up, moved around, on join and respawn,
+  # and by a periodic scan so items handed out by kit plugins are covered too.
+  # Ticks between scans (20 = every second). 0 disables the scan.
+  auto-patch-interval-ticks: 20
+
+  charge:
+    # Ticks before the charge can hit anything. Vanilla is several ticks, 0 = instant.
+    delay-ticks: 0
+
+    # Ticks a target is immune to being hit again by the same charge. -1 = vanilla.
+    contact-cooldown-ticks: -1
+
+    # Multiplies charge damage. -1 = vanilla.
+    damage-multiplier: -1
+
+    # Each block below controls one effect. Values use the same units as the vanilla
+    # kinetic_weapon component. max-duration-ticks is how long after the delay the
+    # effect stays active; the vanilla values are short, which is why a vanilla spear
+    # "runs out" if you hold the charge. min-speed / min-relative-speed 0 = no minimum.
+    # override: false keeps the vanilla values for that effect.
+    damage:
+      override: true
+      max-duration-ticks: 1200
+      min-speed: 0.0
+      min-relative-speed: 0.0
+    knockback:
+      override: true
+      max-duration-ticks: 1200
+      min-speed: 0.0
+      min-relative-speed: 0.0
+    dismount:
+      override: true
+      max-duration-ticks: 1200
+      min-speed: 0.0
+      min-relative-speed: 0.0
+
+# ---------------------------------------------------------------------------
+# Shield stunning
+# When an axe (or anything else) disables a player's shield, that player's
+# invulnerability frames are cleared so the very next hit lands at full damage.
+# That is the axe -> mace / axe -> sword "stun slam" follow-up.
+# ---------------------------------------------------------------------------
+shield-stun:
+  enabled: true
+
+  # How long after the shield is disabled the follow-up hit gets the bonus (ticks).
+  window-ticks: 10
+
+  # true = only the player who broke the shield gets the free follow-up.
+  same-attacker-only: false
+
+  # true = the bonus is used up by the first follow-up hit.
+  consume-on-hit: true
+
+  # Only react when the shield was disabled by a player (not a mob).
+  players-only: true
+
+  # Shield cooldown after being disabled, in ticks. -1 = vanilla (100 = 5 seconds).
+  disable-cooldown-ticks: -1
+
+# ---------------------------------------------------------------------------
+# K/D stats
+# Kills and deaths are counted from real player deaths and kept in
+# plugins/PvPCore/stats.yml. K/D = kills / deaths; a player with no deaths yet has a
+# K/D equal to their kills. Players are ranked by K/D (ties: more kills, then fewer
+# deaths). Players with no kills and no deaths are unranked.
+# ---------------------------------------------------------------------------
+stats:
+  # How often totals are written to stats.yml, in seconds. Also saved on shutdown.
+  save-interval-seconds: 300
+
+# ---------------------------------------------------------------------------
+# Action bar: only K/D and rank.
+# Formats use MiniMessage. Placeholders: <kd> <rank> (4) <ordinal> (4th) <kills> <deaths>
+# Want "#4" instead of "#4th"? Write #<rank> in place of #<ordinal>.
+# ---------------------------------------------------------------------------
+actionbar:
+  enabled: true
+  update-interval-ticks: 10
+  kd-decimals: 1
+  format: "<gray>K/D:</gray> <white><kd></white>  <gold>#<ordinal></gold>"
+  # Shown to players with no kills and no deaths yet.
+  format-unranked: "<gray>K/D:</gray> <white><kd></white>  <dark_gray>unranked</dark_gray>"
+
+# ---------------------------------------------------------------------------
+# /leaderboard (opens a dialog, best K/D first)
+# ---------------------------------------------------------------------------
+leaderboard:
+  # How many players are listed (1-50).
+  size: 10
+  kd-decimals: 2
+  title: "<gold><bold>K/D Leaderboard</bold></gold>"
